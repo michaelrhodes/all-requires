@@ -2,6 +2,8 @@ var detective = require('detective');
 var _ = require('lodash');
 var recursive = require('recursive-readdir');
 var fs = require('fs');
+var path = require('path');
+var async = require('async');
 var core = require('is-core-module');
 var local = /^\.|\//;
 
@@ -17,8 +19,17 @@ var onlyDependencies = function(filename) {
 		&& !core(filename);
 };
 
-var find = function(path, cb) {
-	recursive(path, function (err, filenames) {
+var nodeModulePath = function(dir, filename) {
+	return path.join(dir, '/node_modules/', filename);
+};
+
+var find = function(dir, opts, cb) {
+	if (typeof opts === 'function') {
+		cb = opts;
+		opts = {};
+	}
+
+	recursive(dir, function (err, filenames) {
 		var jsFiles = filenames.filter(onlySourceFiles);
 
 		var counter = 0;
@@ -37,7 +48,17 @@ var find = function(path, cb) {
 				requires = requires.concat(detective(content));
 
 				if (counter === 0) {
-					cb(null, _.unique(requires.filter(onlyDependencies)));
+					var filtered = _.unique(requires.filter(onlyDependencies));
+					if (!opts.onlyMissing) {
+						return cb(null, filtered);
+					}
+					async.filter(filtered, function(dep, next) {
+						fs.exists(nodeModulePath(dir, dep), function(exists) {
+							next(!exists ? dep : null);
+						});
+					}, function(deps) {
+						cb(null, deps);
+					});
 				}
 			});
 		}
